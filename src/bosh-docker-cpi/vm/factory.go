@@ -146,8 +146,11 @@ func (f Factory) Create(agentID apiv1.AgentID, stemcell bstem.Stemcell,
 	vmProps.HostConfig.Privileged = true      //nolint:staticcheck
 	vmProps.HostConfig.PublishAllPorts = true //nolint:staticcheck
 
-	if startContainersWithSystemD {
-		// systemd requires access to the host cgroup hierarchy, especially with cgroups v2.
+	if startContainersWithSystemD && f.Config.UseHostCgroupNamespace {
+		// Opt-in only. Docker's default (private cgroup namespace) works fine for
+		// systemd inside a privileged container on a cgroup v2 host, and is required
+		// for the container's Memory/CpuQuota limits (from vm_type cloud_properties)
+		// to actually constrain nested processes (e.g. kubelet).
 		vmProps.HostConfig.CgroupnsMode = dkrcont.CgroupnsModeHost //nolint:staticcheck
 	}
 
@@ -162,12 +165,27 @@ func (f Factory) Create(agentID apiv1.AgentID, stemcell bstem.Stemcell,
 		"/lib/modules:/usr/lib/modules", // make host kernel modules accessible
 	}
 
-	if cgroupBind(startContainersWithSystemD, f.Config.MountCgroupfs) {
+	if cgroupBind(startContainersWithSystemD, f.Config.MountCgroupfs, f.Config.UseHostCgroupNamespace) {
 		binds = append(binds, "/sys/fs/cgroup:/sys/fs/cgroup:rw")
 	}
 
 	if lxcfsEnabled {
-		binds = append(binds, "/var/lib/lxcfs/proc/meminfo:/proc/meminfo:rw")
+		if vmProps.HostConfig.CpusetCpus == "" && vmProps.HostConfig.CPUQuota > 0 && vmProps.HostConfig.CPUPeriod > 0 {
+			numCpus := int(vmProps.HostConfig.CPUQuota / vmProps.HostConfig.CPUPeriod)
+			if numCpus > 0 {
+				vmProps.HostConfig.CpusetCpus = fmt.Sprintf("0-%d", numCpus-1)
+			}
+		}
+
+		binds = append(binds,
+			"/var/lib/lxcfs/proc/meminfo:/proc/meminfo:rw",
+			"/var/lib/lxcfs/proc/cpuinfo:/proc/cpuinfo:rw",
+			"/var/lib/lxcfs/proc/stat:/proc/stat:rw",
+			"/var/lib/lxcfs/proc/uptime:/proc/uptime:rw",
+			"/var/lib/lxcfs/proc/diskstats:/proc/diskstats:rw",
+			"/var/lib/lxcfs/proc/loadavg:/proc/loadavg:rw",
+			"/var/lib/lxcfs/proc/swaps:/proc/swaps:rw",
+		)
 	}
 
 	vmProps.HostConfig.Binds = binds //nolint:staticcheck
@@ -274,8 +292,8 @@ func populateResolveConf(networks apiv1.Networks) string {
 // the host hierarchy. On cgroup-v1 hosts it must be omitted because the shared
 // host mount causes runc to encounter EBUSY when it tries to rmdir an empty
 // memory cgroup whose kernel accounting charges have not yet propagated.
-func cgroupBind(startContainersWithSystemD, mountCgroupfs bool) bool {
-	return startContainersWithSystemD && mountCgroupfs
+func cgroupBind(startContainersWithSystemD, mountCgroupfs, useHostCgroupNamespace bool) bool {
+	return startContainersWithSystemD && mountCgroupfs && useHostCgroupNamespace
 }
 
 func (f Factory) cleanMounts(vmProps Props) Props {
