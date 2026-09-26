@@ -178,10 +178,18 @@ func (f Factory) Create(agentID apiv1.AgentID, stemcell bstem.Stemcell,
 		}
 
 		binds = append(binds,
+			// /proc/uptime is deliberately NOT bound: LXCFS reports it relative to
+			// the cgroup/container's own creation time, but /proc/<pid>/stat's
+			// starttime field (used by BOSH's agent vitals, and by "ps"/"top"-style
+			// uptime math generally) is the kernel's real value relative to the
+			// underlying Docker host's boot time, which LXCFS cannot virtualize.
+			// Since the host always boots before any individual container it hosts,
+			// current_uptime - starttime goes negative for every process, breaking
+			// anything that parses BOSH vitals as an unsigned integer (e.g. bosh
+			// vms/instances, and on-demand-service-broker's bind flow).
 			"/var/lib/lxcfs/proc/meminfo:/proc/meminfo:rw",
 			"/var/lib/lxcfs/proc/cpuinfo:/proc/cpuinfo:rw",
 			"/var/lib/lxcfs/proc/stat:/proc/stat:rw",
-			"/var/lib/lxcfs/proc/uptime:/proc/uptime:rw",
 			"/var/lib/lxcfs/proc/diskstats:/proc/diskstats:rw",
 			"/var/lib/lxcfs/proc/loadavg:/proc/loadavg:rw",
 			"/var/lib/lxcfs/proc/swaps:/proc/swaps:rw",
