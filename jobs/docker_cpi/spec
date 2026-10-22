@@ -43,6 +43,9 @@ properties:
   docker_cpi.mount_cgroupfs:
     description: "Bind-mount the host /sys/fs/cgroup into systemd containers (required for cgroups v2; set false on cgroups v1 hosts to avoid the dying-cgroup runc delete failure). Only takes effect when start_containers_with_systemd is true."
     default: true
+  docker_cpi.use_host_cgroup_namespace:
+    description: "Share the host's cgroup namespace with systemd containers instead of Docker's default private cgroup namespace. Set false to give each container its own cgroup namespace, so that the Memory and CPU limits derived from the vm_type cloud_properties also constrain processes nested inside it. Only takes effect when start_containers_with_systemd is true."
+    default: true
   docker_cpi.enable_lxcfs_support:
     description: "Enable LXCFS support for containers"
     default: false

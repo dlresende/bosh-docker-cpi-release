@@ -146,7 +146,7 @@ func (f Factory) Create(agentID apiv1.AgentID, stemcell bstem.Stemcell,
 	vmProps.HostConfig.Privileged = true      //nolint:staticcheck
 	vmProps.HostConfig.PublishAllPorts = true //nolint:staticcheck
 
-	if startContainersWithSystemD {
+	if startContainersWithSystemD && f.Config.UseHostCgroupNamespace {
 		// systemd requires access to the host cgroup hierarchy, especially with cgroups v2.
 		vmProps.HostConfig.CgroupnsMode = dkrcont.CgroupnsModeHost //nolint:staticcheck
 	}
