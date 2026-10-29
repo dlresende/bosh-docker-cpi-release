@@ -147,8 +147,20 @@ func (f Factory) Create(agentID apiv1.AgentID, stemcell bstem.Stemcell,
 	vmProps.HostConfig.PublishAllPorts = true //nolint:staticcheck
 
 	if startContainersWithSystemD {
-		// systemd requires access to the host cgroup hierarchy, especially with cgroups v2.
-		vmProps.HostConfig.CgroupnsMode = dkrcont.CgroupnsModeHost //nolint:staticcheck
+		if cgroupNamespaceConflict(startContainersWithSystemD, f.Config.MountCgroupfs, f.Config.UseHostCgroupNamespace) {
+			return Container{}, bosherr.Error("docker_cpi.mount_cgroupfs binds the host cgroup hierarchy into the container, which defeats docker_cpi.use_host_cgroup_namespace being false; set mount_cgroupfs to false to give the container its own cgroup namespace")
+		}
+
+		if f.Config.UseHostCgroupNamespace {
+			// systemd requires access to the host cgroup hierarchy, especially with cgroups v2.
+			vmProps.HostConfig.CgroupnsMode = dkrcont.CgroupnsModeHost //nolint:staticcheck
+		} else {
+			// Set this explicitly rather than leaving it empty: the container is
+			// privileged, and for an empty CgroupnsMode the daemon falls back to the
+			// host namespace on cgroup v1 hosts and to its own configured default
+			// otherwise, so an empty value would not reliably give a private one.
+			vmProps.HostConfig.CgroupnsMode = dkrcont.CgroupnsModePrivate //nolint:staticcheck
+		}
 	}
 
 	for _, port := range vmProps.ExposedPorts {
@@ -274,6 +286,15 @@ func populateResolveConf(networks apiv1.Networks) string {
 // the host hierarchy. On cgroup-v1 hosts it must be omitted because the shared
 // host mount causes runc to encounter EBUSY when it tries to rmdir an empty
 // memory cgroup whose kernel accounting charges have not yet propagated.
+// cgroupNamespaceConflict reports whether the requested combination asks for a
+// private cgroup namespace while also binding the host cgroup hierarchy in. The
+// two cancel out: the container would get its own namespace but still read the
+// host's hierarchy through /sys/fs/cgroup, so the limits it is meant to observe
+// would still be invisible to it.
+func cgroupNamespaceConflict(startContainersWithSystemD, mountCgroupfs, useHostCgroupNamespace bool) bool {
+	return startContainersWithSystemD && mountCgroupfs && !useHostCgroupNamespace
+}
+
 func cgroupBind(startContainersWithSystemD, mountCgroupfs bool) bool {
 	return startContainersWithSystemD && mountCgroupfs
 }
